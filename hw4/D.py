@@ -1,9 +1,10 @@
+#! /usr/bin/env python3
 import re
 import sys
 import random
 import unittest
 from argparse import ArgumentParser
-from collections import deque
+from collections import deque, defaultdict
 
 
 """          TEST START          """
@@ -52,6 +53,22 @@ class TestProbabilities(unittest.TestCase):
                ('test',): {'line': 1, 'sentence': 1}}
         self.assertDictEqual(ans, probs)
 
+    def test_normalize(self):
+        s = "First test sentence\nSecond test line"
+        probs = get_probabilities(s, 1, normalize=True)
+        for w in probs.values():
+            total = sum(w.values())
+            self.assertAlmostEqual(total, 1)
+
+
+class TestGenerate(unittest.TestCase):
+    def test_simple(self):
+        s = "First test sentence\nSecond test line\n"
+        probs = get_probabilities(s, 2, letters_only=False, lines_independent=False)
+        for sz in [10, 100, 1000]:
+            res = generate(probs, sz)
+            self.assertEqual(len(list(tokenize(res))), sz)
+
 
 """           TEST END           """
 
@@ -69,7 +86,7 @@ def tokenize(input):
 
 def get_probabilities(input, depth, letters_only=True, lines_independent=True, normalize=True):
     window = deque()
-    probs = dict()
+    probs = defaultdict(dict)
     for token in tokenize(input):
         if lines_independent and token == '\n':
             window.clear()
@@ -84,8 +101,6 @@ def get_probabilities(input, depth, letters_only=True, lines_independent=True, n
         max_len = min(depth, len(chain) - 1)
         for start in range(0, 1 + max_len):
             subchain = tuple(chain[start:max_len])
-            if subchain not in probs:
-                probs[subchain] = dict()
             if target not in probs[subchain]:
                 probs[subchain][target] = 0
             probs[subchain][target] += 1
@@ -98,6 +113,8 @@ def get_probabilities(input, depth, letters_only=True, lines_independent=True, n
 
 
 def weighted_choice(choices):
+    if len(choices) == 0:
+        raise ValueError("cannot choose from empy list")
     total = sum(w for c, w in choices)
     r = random.uniform(0, total)
     upto = 0
@@ -105,6 +122,7 @@ def weighted_choice(choices):
         if upto + w >= r:
             return c
         upto += w
+    return choices[0][0]
 
 
 def generate(probs, size):
@@ -120,42 +138,43 @@ def generate(probs, size):
 
 
 def main():
-    parser = ArgumentParser()
-    parser.add_argument("action", choices=["tokenize", "generate", "probabilities", "test"])
-    parser.add_argument("--depth", type=int)
-    parser.add_argument("--size", type=int)
-    res = parser.parse_args(input().split())
-    if res.action == "tokenize":
-        if res.depth or res.size:
-            parser.print_help()
-            return
+    def tok(args):
         for token in tokenize(input()):
             print(token)
-    elif res.action == "probabilities":
-        if not res.depth or res.size:
-            parser.print_help()
-            return
-        probs = get_probabilities("".join(sys.stdin.readlines()), res.depth,
+
+    def gen(args):
+        probs = get_probabilities("".join(sys.stdin.readlines()), args.depth,
+                                  letters_only=False, lines_independent=False)
+        print(generate(probs, args.size))
+
+    def probs(args):
+        probs = get_probabilities("".join(sys.stdin.readlines()), args.depth,
                                   letters_only=True, lines_independent=True)
         for chain in sorted(probs.keys()):
             print(*chain)
             for target in sorted(probs[chain].keys()):
                 print("  %s: %.2f" % (target, probs[chain][target]))
-    elif res.action == "generate":
-        if not res.depth or not res.size:
-            parser.print_help()
-            return
-        probs = get_probabilities("".join(sys.stdin.readlines()), res.depth,
-                                  letters_only=False, lines_independent=False)
-        print(generate(probs, res.size))
-    elif res.action == "test":
-        if res.depth or res.size:
-            parser.print_help()
-            return
-        unittest.main()
-    else:
-        raise NotImplementedError()
 
+    parser = ArgumentParser()
+    subparsers = parser.add_subparsers()
+
+    parser_tok = subparsers.add_parser("tokenize")
+    parser_tok.set_defaults(func=tok)
+
+    parser_gen = subparsers.add_parser("generate")
+    parser_gen.add_argument("--depth", type=int, required=True)
+    parser_gen.add_argument("--size", type=int, required=True)
+    parser_gen.set_defaults(func=gen)
+
+    parser_probs = subparsers.add_parser("probabilities")
+    parser_probs.add_argument("--depth", type=int, required=True)
+    parser_probs.set_defaults(func=probs)
+
+    parser_test = subparsers.add_parser("test")
+    parser_test.set_defaults(func=lambda args: unittest.main())
+
+    res = parser.parse_args(input().split())
+    res.func(res)
 
 if __name__ == "__main__":
     main()
